@@ -1,5 +1,6 @@
-const CACHE = "gymlog-v2";
-const ASSETS = ["/", "/index.html", "/manifest.json", "/icon-192.png", "/icon-512.png"];
+const CACHE = "gymlog-v3";
+const BASE = "/gymlog/";
+const ASSETS = [BASE, `${BASE}index.html`, `${BASE}manifest.json`, `${BASE}icon-192.png`, `${BASE}icon-512.png`];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
@@ -28,7 +29,7 @@ self.addEventListener("fetch", (event) => {
           }
           return response;
         })
-        .catch(() => caches.match("/index.html"));
+        .catch(() => caches.match(`${BASE}index.html`));
     })
   );
 });
