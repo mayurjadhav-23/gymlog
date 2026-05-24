@@ -7,32 +7,622 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="GymLog" />
-  <title>GymLog</title>
+  <title>GymLog 💪</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="apple-touch-icon" href="icon.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body, #root { height: 100%; width: 100%; }
-    body { background: #080c14; font-family: 'Inter', system-ui, sans-serif; }
+    body { background: #080c14; font-family: 'Inter', system-ui, sans-serif; -webkit-tap-highlight-color: transparent; }
     #root { display: flex; justify-content: center; }
   </style>
 </head>
 <body>
   <div id="root"></div>
-
-  <!-- React + Babel -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script>
+  // ─────────────────────────────────────────
+  // CONSTANTS
+  // ─────────────────────────────────────────
+  const VALID_REASONS = ["Sick","Travel","Work Emergency","Family Emergency","Other"];
+  const DEFAULT_TAGS  = ["Push","Pull","Legs","Upper","Lower","Full Body","Cardio","Arms","Core"];
+  const STORAGE_KEY   = "gymTrackerData_v3";
+  const SCRIPT_URL_KEY= "gymScriptUrl";
 
-  <script type="text/babel" src="app.js"></script>
+  // ─────────────────────────────────────────
+  // DATE HELPERS (always local, never UTC)
+  // ─────────────────────────────────────────
+  const pad = n => String(n).padStart(2,"0");
+  function toLocalStr(d){ return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
+  function getTodayStr(){ return toLocalStr(new Date()); }
+  function parseLocal(ds){ const [y,m,d]=ds.split("-").map(Number); return new Date(y,m-1,d); }
+  function isSunday(ds){ return parseLocal(ds).getDay()===0; }
+  function getDateRange(year,month){
+    const days=[],d=new Date(year,month,1);
+    while(d.getMonth()===month){days.push(toLocalStr(d));d.setDate(d.getDate()+1);}
+    return days;
+  }
+
+  // ─────────────────────────────────────────
+  // STREAK
+  // ─────────────────────────────────────────
+  function computeStreak(logs){
+    let streak=0; const d=new Date();
+    while(true){
+      const ds=toLocalStr(d);
+      if(isSunday(ds)){d.setDate(d.getDate()-1);continue;}
+      const log=logs[ds];
+      if(!log) break;
+      if(log.wentGym||(log.skipped&&log.reason)) streak++;
+      else break;
+      d.setDate(d.getDate()-1);
+    }
+    return streak;
+  }
+
+  // ─────────────────────────────────────────
+  // STORAGE
+  // ─────────────────────────────────────────
+  function loadLocal(){
+    try{ const r=localStorage.getItem(STORAGE_KEY); return r?JSON.parse(r):{logs:{},proteinGoal:100,customTags:[],weights:{}}; }
+    catch{ return {logs:{},proteinGoal:100,customTags:[],weights:{}}; }
+  }
+  function saveLocal(data){ localStorage.setItem(STORAGE_KEY,JSON.stringify(data)); }
+
+  // ─────────────────────────────────────────
+  // STYLES
+  // ─────────────────────────────────────────
+  const s={
+    root:{background:"#080c14",minHeight:"100vh",color:"#f1f5f9",fontFamily:"'Inter',system-ui,sans-serif",display:"flex",flexDirection:"column",maxWidth:420,margin:"0 auto",position:"relative"},
+    header:{padding:"18px 20px 12px",background:"linear-gradient(180deg,#0f172a 0%,transparent 100%)",position:"sticky",top:0,zIndex:10,backdropFilter:"blur(12px)"},
+    headerInner:{display:"flex",alignItems:"center",gap:8},
+    logo:{fontSize:22,fontWeight:800,background:"linear-gradient(135deg,#818cf8,#a78bfa)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"},
+    page:{flex:1,padding:"12px 16px 100px",overflowY:"auto"},
+    overlay:{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:20},
+    modal:{background:"#111827",borderRadius:20,padding:24,width:"100%",maxWidth:380,border:"1px solid #1e293b"},
+    modalTitle:{fontSize:18,fontWeight:800,marginBottom:6},
+    modalSub:{fontSize:13,color:"#64748b",lineHeight:1.5},
+    section:{background:"#111827",borderRadius:18,padding:18,marginBottom:12,border:"1px solid #1e293b"},
+    sectionHead:{display:"flex",alignItems:"center",gap:8,marginBottom:12},
+    sectionIcon:{fontSize:18},
+    sectionTitle:{fontSize:15,fontWeight:700,color:"#e2e8f0"},
+    label:{fontSize:12,color:"#64748b",marginBottom:8,letterSpacing:0.5,textTransform:"uppercase",fontWeight:600},
+    streakCard:{background:"linear-gradient(135deg,#1e1b4b 0%,#1a1035 100%)",borderRadius:20,padding:"20px 22px",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between",border:"1px solid #312e81"},
+    streakNum:{fontSize:52,fontWeight:900,lineHeight:1,background:"linear-gradient(135deg,#f97316,#fbbf24)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"},
+    streakLbl:{color:"#818cf8",fontSize:13,fontWeight:500,marginTop:2},
+    fireCol:{display:"flex",flexWrap:"wrap",maxWidth:80,gap:2,justifyContent:"flex-end"},
+    datePill:{display:"inline-block",background:"#1e293b",borderRadius:20,padding:"5px 14px",fontSize:12,color:"#64748b",marginBottom:14},
+    toggleWrap:{display:"flex",gap:8},
+    toggleBtn:{flex:1,padding:"10px 0",borderRadius:12,border:"none",fontSize:14,fontWeight:600,cursor:"pointer"},
+    toggleIdle:{background:"#1e293b",color:"#64748b"},
+    toggleOn:{background:"linear-gradient(135deg,#166534,#15803d)",color:"#bbf7d0"},
+    toggleOff:{background:"linear-gradient(135deg,#7f1d1d,#991b1b)",color:"#fecaca"},
+    chipRow:{display:"flex",flexWrap:"wrap",gap:8,marginTop:4},
+    chip:{padding:"7px 14px",borderRadius:20,border:"1px solid #1e293b",background:"#1e293b",color:"#94a3b8",fontSize:13,fontWeight:500,cursor:"pointer"},
+    chipOn:{background:"linear-gradient(135deg,#312e81,#3730a3)",border:"1px solid #6366f1",color:"#e0e7ff"},
+    suppRow:{display:"flex",gap:10,marginBottom:12},
+    suppCard:{flex:1,background:"#111827",borderRadius:18,padding:16,border:"1px solid #1e293b",textAlign:"center"},
+    suppOn:{border:"1px solid #4f46e5"},
+    suppIcon:{fontSize:24,marginBottom:4},
+    suppName:{fontSize:13,color:"#94a3b8",marginBottom:10,fontWeight:600},
+    proteinBadge:{marginLeft:"auto",borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700},
+    barWrap:{height:6,background:"#1e293b",borderRadius:99,overflow:"hidden",marginTop:12},
+    barFill:{height:"100%",borderRadius:99,transition:"width 0.4s ease"},
+    barLabels:{display:"flex",justifyContent:"space-between",fontSize:11,color:"#475569",marginTop:5},
+    input:{background:"#1e293b",border:"1px solid #334155",borderRadius:12,padding:"12px 16px",color:"#f1f5f9",fontSize:16,width:"100%",boxSizing:"border-box",outline:"none"},
+    primaryBtn:{padding:"12px 20px",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",border:"none",borderRadius:12,color:"#fff",fontWeight:700,cursor:"pointer",fontSize:14,whiteSpace:"nowrap"},
+    secondaryBtn:{padding:"12px 20px",background:"#1e293b",border:"1px solid #334155",borderRadius:12,color:"#f1f5f9",fontWeight:600,cursor:"pointer",fontSize:14,width:"100%",whiteSpace:"nowrap"},
+    ghostBtn:{background:"none",border:"none",color:"#64748b",cursor:"pointer",fontSize:13,width:"100%",marginTop:8,padding:"8px 0"},
+    deleteTag:{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:14,padding:"0 4px"},
+    calHeader:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,padding:"0 4px"},
+    calNavBtn:{background:"#1e293b",border:"none",color:"#f1f5f9",borderRadius:10,padding:"6px 16px",fontSize:20,cursor:"pointer"},
+    calTitle:{fontWeight:700,fontSize:17},
+    calGrid:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:5},
+    calDayLbl:{textAlign:"center",fontSize:11,color:"#475569",paddingBottom:6,fontWeight:600},
+    calCell:{borderRadius:10,padding:"6px 2px",textAlign:"center",minHeight:46,userSelect:"none"},
+    calDayNum:{fontSize:13,fontWeight:600,marginBottom:2},
+    legendRow:{display:"flex",flexWrap:"wrap",gap:10,marginTop:14,padding:"0 2px"},
+    legendItem:{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#64748b"},
+    legendDot:{width:10,height:10,borderRadius:4},
+    detail:{background:"#111827",borderRadius:18,padding:18,marginTop:14,border:"1px solid #1e293b"},
+    detailDate:{fontWeight:700,fontSize:14,color:"#818cf8",marginBottom:12},
+    detailRow:{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #1e293b"},
+    detailKey:{color:"#64748b",fontSize:13},
+    detailVal:{color:"#f1f5f9",fontSize:13,fontWeight:600},
+    statHero:{background:"linear-gradient(135deg,#1e1b4b,#1a1035)",borderRadius:20,padding:"28px 24px",textAlign:"center",marginBottom:12,border:"1px solid #312e81"},
+    statHeroNum:{fontSize:64,fontWeight:900,background:"linear-gradient(135deg,#f97316,#fbbf24)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"},
+    statHeroLbl:{color:"#818cf8",fontSize:15,fontWeight:600},
+    statGrid:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12},
+    statCard:{background:"#111827",borderRadius:16,padding:16,border:"1px solid #1e293b",textAlign:"center"},
+    statEmoji:{fontSize:22,marginBottom:4},
+    statNum:{fontSize:26,fontWeight:800,color:"#f1f5f9"},
+    statLbl:{fontSize:12,color:"#64748b",marginTop:3},
+    tagRow:{display:"flex",alignItems:"center",gap:10,marginBottom:10},
+    tagName:{width:80,fontSize:13,color:"#94a3b8",fontWeight:600},
+    tagBarWrap:{flex:1,height:6,background:"#1e293b",borderRadius:99,overflow:"hidden"},
+    tagBarFill:{height:"100%",background:"linear-gradient(90deg,#6366f1,#a78bfa)",borderRadius:99},
+    tagCount:{fontSize:12,color:"#64748b",width:28,textAlign:"right"},
+    weightRow:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid #1e293b"},
+    weightDate:{fontSize:13,color:"#64748b"},
+    weightVal:{fontSize:15,fontWeight:700,color:"#a78bfa"},
+    restCard:{background:"linear-gradient(135deg,#0f172a,#1e1b4b)",borderRadius:24,padding:"48px 24px",textAlign:"center",border:"1px solid #1e293b",marginTop:20},
+    restEmoji:{fontSize:64,marginBottom:12},
+    restTitle:{fontSize:28,fontWeight:800,color:"#818cf8"},
+    restSub:{color:"#475569",marginTop:8,fontSize:14},
+    syncBadge:{borderRadius:12,padding:"8px 14px",fontSize:13,fontWeight:600,textAlign:"center",marginTop:12},
+    bottomNav:{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:420,display:"flex",background:"rgba(8,12,20,0.95)",borderTop:"1px solid #1e293b",backdropFilter:"blur(16px)",zIndex:20},
+    navBtn:{flex:1,padding:"12px 0 10px",background:"none",border:"none",color:"#475569",cursor:"pointer",fontWeight:600},
+    navBtnActive:{color:"#818cf8"},
+  };
+
+  // ─────────────────────────────────────────
+  // SHARED COMPONENTS
+  // ─────────────────────────────────────────
+  const { useState, useEffect, useCallback } = React;
+
+  function Toggle({ value, onChange }){
+    return React.createElement("div",{style:s.toggleWrap},
+      [true,false].map(v=>React.createElement("button",{
+        key:v,onClick:()=>onChange(v),
+        style:{...s.toggleBtn,...(value===v?(v?s.toggleOn:s.toggleOff):s.toggleIdle)}
+      },v?"Yes":"No"))
+    );
+  }
+
+  function Chip({ label, active, onClick }){
+    return React.createElement("button",{onClick,style:{...s.chip,...(active?s.chipOn:{})}},label);
+  }
+
+  function StreakCard({ streak }){
+    return React.createElement("div",{style:s.streakCard},
+      React.createElement("div",null,
+        React.createElement("div",{style:s.streakNum},streak),
+        React.createElement("div",{style:s.streakLbl},"day streak")
+      ),
+      React.createElement("div",{style:s.fireCol},
+        streak===0
+          ? React.createElement("span",{style:{fontSize:36}},"🔥")
+          : [...Array(Math.min(streak,7))].map((_,i)=>React.createElement("span",{key:i,style:{fontSize:18,opacity:0.4+i*0.09}},"🔥"))
+      )
+    );
+  }
+
+  // ─────────────────────────────────────────
+  // APP
+  // ─────────────────────────────────────────
+  function App(){
+    const [data,setData]               = useState(loadLocal);
+    const [view,setView]               = useState("today");
+    const [scriptUrl,setScriptUrl]     = useState(()=>localStorage.getItem(SCRIPT_URL_KEY)||"");
+    const [syncStatus,setSyncStatus]   = useState("idle");
+    const [syncModal,setSyncModal]     = useState(false);
+    const [urlModal,setUrlModal]       = useState(!localStorage.getItem(SCRIPT_URL_KEY));
+    const [urlInput,setUrlInput]       = useState("");
+    const [newTag,setNewTag]           = useState("");
+    const [testMode,setTestMode]       = useState(false);
+    const [editing,setEditing]         = useState(true);
+    const [protein,setProtein]         = useState(()=>loadLocal().logs[getTodayStr()]?.protein??"");
+
+    const today    = getTodayStr();
+    const todayLog = data.logs[today]||{};
+    const allTags  = [...DEFAULT_TAGS,...(data.customTags||[])];
+    const streak   = computeStreak(data.logs);
+
+    const now = new Date();
+    const [calMonth,setCalMonth] = useState(now.getMonth());
+    const [calYear,setCalYear]   = useState(now.getFullYear());
+    const [selectedDay,setSelectedDay] = useState(null);
+
+    useEffect(()=>{
+      if(data.logs[today]?.wentGym!==undefined) setEditing(false);
+    },[]);
+
+    // ── SYNC ──
+    const syncToSheet = useCallback(async(date,entry,url=scriptUrl)=>{
+      if(!url) return;
+      setSyncStatus("syncing");
+      try{
+        await fetch(url,{method:"POST",body:JSON.stringify({date,entry}),headers:{"Content-Type":"text/plain"},mode:"no-cors"});
+        setSyncStatus("ok"); setTimeout(()=>setSyncStatus("idle"),2000);
+      }catch{ setSyncStatus("error"); setTimeout(()=>setSyncStatus("idle"),3000); }
+    },[scriptUrl]);
+
+    const pullFromSheet = async(url=scriptUrl)=>{
+      if(!url) return null;
+      setSyncStatus("syncing");
+      try{
+        const res=await fetch(url+"?action=get"); const json=await res.json();
+        if(json.ok){setSyncStatus("ok");setTimeout(()=>setSyncStatus("idle"),2000);return json.logs;}
+        setSyncStatus("error"); return null;
+      }catch{setSyncStatus("error");setTimeout(()=>setSyncStatus("idle"),3000);return null;}
+    };
+
+    useEffect(()=>{
+      if(scriptUrl&&Object.keys(data.logs).length>0) setSyncModal(true);
+      else if(scriptUrl) pullFromSheet(scriptUrl).then(logs=>{
+        if(logs) setData(p=>{const d={...p,logs};saveLocal(d);return d;});
+      });
+    },[]);
+
+    const handleSaveUrl = url=>{
+      localStorage.setItem(SCRIPT_URL_KEY,url); setScriptUrl(url); setUrlModal(false);
+      if(Object.keys(data.logs).length>0) setSyncModal(true);
+      else pullFromSheet(url).then(logs=>{if(logs) setData(p=>{const d={...p,logs};saveLocal(d);return d;});});
+    };
+
+    const updateLog = useCallback((date,patch)=>{
+      setData(prev=>{
+        const updated={...prev,logs:{...prev.logs,[date]:{...prev.logs[date],...patch}}};
+        saveLocal(updated); return updated;
+      });
+    },[]);
+
+    const updateData = useCallback(patch=>{
+      setData(prev=>{const d={...prev,...patch};saveLocal(d);return d;});
+    },[]);
+
+    const handleSave=()=>{ syncToSheet(today,data.logs[today]); setEditing(false); };
+
+    // ── SYNC BADGE ──
+    function SyncBadge(){
+      const map={syncing:["☁️ Syncing...","#1e3a5f"],ok:["✅ Synced","#052e16"],error:["❌ Sync failed","#450a0a"],idle:null};
+      const val=map[syncStatus]; if(!val) return null;
+      return React.createElement("div",{style:{...s.syncBadge,background:val[1]}},val[0]);
+    }
+
+    // ── URL MODAL ──
+    function UrlModal(){
+      return React.createElement("div",{style:s.overlay},
+        React.createElement("div",{style:s.modal},
+          React.createElement("div",{style:s.modalTitle},"🔗 Connect Google Sheet"),
+          React.createElement("div",{style:s.modalSub},"Paste your Apps Script Web App URL to enable cloud sync."),
+          React.createElement("input",{value:urlInput,onChange:e=>setUrlInput(e.target.value),placeholder:"https://script.google.com/macros/s/...",style:{...s.input,marginTop:14}}),
+          React.createElement("button",{onClick:()=>urlInput.trim()&&handleSaveUrl(urlInput.trim()),style:{...s.primaryBtn,width:"100%",marginTop:12}},"Connect"),
+          React.createElement("button",{onClick:()=>setUrlModal(false),style:s.ghostBtn},"Skip for now")
+        )
+      );
+    }
+
+    // ── SYNC MODAL ──
+    function SyncModal(){
+      return React.createElement("div",{style:s.overlay},
+        React.createElement("div",{style:s.modal},
+          React.createElement("div",{style:s.modalTitle},"☁️ Sync Data"),
+          React.createElement("div",{style:s.modalSub},"You have local data and a connected sheet. What do you want to do?"),
+          React.createElement("button",{onClick:async()=>{setSyncModal(false);const logs=await pullFromSheet();if(logs)setData(p=>{const d={...p,logs};saveLocal(d);return d;});},style:{...s.primaryBtn,width:"100%",marginTop:14}},"⬇️ Pull from Sheet"),
+          React.createElement("button",{onClick:()=>{setSyncModal(false);Object.entries(data.logs).forEach(([date,entry])=>syncToSheet(date,entry));},style:{...s.secondaryBtn,width:"100%",marginTop:10}},"⬆️ Push Local to Sheet"),
+          React.createElement("button",{onClick:()=>setSyncModal(false),style:s.ghostBtn},"Cancel")
+        )
+      );
+    }
+
+    // ── TODAY ──
+    function TodayView(){
+      const log=todayLog;
+      const pct=Math.min(100,Math.round(((Number(protein)||0)/data.proteinGoal)*100));
+      const hitGoal=(Number(protein)||0)>=data.proteinGoal;
+      const isSun=isSunday(today)&&!testMode;
+
+      if(isSun) return React.createElement("div",{style:s.restCard},
+        React.createElement("div",{style:s.restEmoji},"😴"),
+        React.createElement("div",{style:s.restTitle},"Rest Day"),
+        React.createElement("div",{style:s.restSub},"Sunday. Recover. Come back harder."),
+        React.createElement("button",{onClick:()=>setTestMode(true),style:{...s.ghostBtn,marginTop:16,fontSize:12,color:"#2d3748"}},"🧪 Test mode")
+      );
+
+      // Saved state
+      if(!editing){
+        const gymStatus=log.wentGym?"✅ Hit":log.skipped?`⚠️ ${log.reason}`:"❌ Missed";
+        const rows=[
+          ["🏋️ Gym",gymStatus],
+          log.tag&&["💪 Workout",log.tag],
+          ["🧪 Creatine",log.creatine===true?"✅ Yes":log.creatine===false?"❌ No":"—"],
+          ["🥛 Whey",log.whey===true?"✅ Yes":log.whey===false?"❌ No":"—"],
+          ["🥩 Protein",log.protein!=null?`${log.protein}g (${pct}%)`:"—"],
+        ].filter(Boolean);
+        return React.createElement("div",null,
+          React.createElement(StreakCard,{streak}),
+          React.createElement("div",{style:s.datePill},parseLocal(today).toDateString()),
+          React.createElement("div",{style:s.section},
+            React.createElement("div",{style:s.sectionHead},
+              React.createElement("span",{style:s.sectionIcon},"📋"),
+              React.createElement("span",{style:s.sectionTitle},"Today's Log")
+            ),
+            ...rows.map(([k,v])=>React.createElement("div",{key:k,style:s.detailRow},
+              React.createElement("span",{style:s.detailKey},k),
+              React.createElement("span",{style:s.detailVal},v)
+            )),
+            React.createElement("button",{onClick:()=>setEditing(true),style:{...s.secondaryBtn,marginTop:14}},"✏️ Edit")
+          ),
+          React.createElement(SyncBadge,null)
+        );
+      }
+
+      // Editing state
+      return React.createElement("div",null,
+        React.createElement(StreakCard,{streak}),
+        React.createElement("div",{style:s.datePill},parseLocal(today).toDateString()),
+
+        // Gym section
+        React.createElement("div",{style:s.section},
+          React.createElement("div",{style:s.sectionHead},
+            React.createElement("span",{style:s.sectionIcon},"🏋️"),
+            React.createElement("span",{style:s.sectionTitle},"Gym")
+          ),
+          React.createElement(Toggle,{value:log.wentGym,onChange:v=>updateLog(today,{wentGym:v,skipped:!v,reason:v?null:log.reason,tag:v?log.tag:null})}),
+          log.wentGym===false&&React.createElement("div",{style:{marginTop:14}},
+            React.createElement("div",{style:s.label},"Reason"),
+            React.createElement("div",{style:s.chipRow},
+              ...VALID_REASONS.map(r=>React.createElement(Chip,{key:r,label:r,active:log.reason===r,onClick:()=>updateLog(today,{reason:r})}))
+            )
+          ),
+          log.wentGym===true&&React.createElement("div",{style:{marginTop:14}},
+            React.createElement("div",{style:s.label},"Workout"),
+            React.createElement("div",{style:s.chipRow},
+              ...allTags.map(t=>React.createElement(Chip,{key:t,label:t,active:log.tag===t,onClick:()=>updateLog(today,{tag:t})}))
+            )
+          )
+        ),
+
+        // Supplements
+        React.createElement("div",{style:s.suppRow},
+          ...[["creatine","🧪","Creatine"],["whey","🥛","Whey"]].map(([key,icon,name])=>
+            React.createElement("div",{key,style:{...s.suppCard,...(log[key]?s.suppOn:{})}},
+              React.createElement("div",{style:s.suppIcon},icon),
+              React.createElement("div",{style:s.suppName},name),
+              React.createElement(Toggle,{value:log[key],onChange:v=>updateLog(today,{[key]:v})})
+            )
+          )
+        ),
+
+        // Protein
+        React.createElement("div",{style:s.section},
+          React.createElement("div",{style:s.sectionHead},
+            React.createElement("span",{style:s.sectionIcon},"🥩"),
+            React.createElement("span",{style:s.sectionTitle},"Protein"),
+            React.createElement("span",{style:{...s.proteinBadge,background:hitGoal?"#052e16":"#1c1008",color:hitGoal?"#4ade80":"#f59e0b",border:`1px solid ${hitGoal?"#22c55e":"#d97706"}`}},`${pct}% ${hitGoal?"✓":""}`)
+          ),
+          React.createElement("input",{type:"number",value:protein,onChange:e=>{setProtein(e.target.value);updateLog(today,{protein:e.target.value===""?undefined:Number(e.target.value)});},placeholder:`Goal: ${data.proteinGoal}g`,style:s.input}),
+          React.createElement("div",{style:s.barWrap},
+            React.createElement("div",{style:{...s.barFill,width:pct+"%",background:hitGoal?"linear-gradient(90deg,#16a34a,#4ade80)":"linear-gradient(90deg,#d97706,#fbbf24)"}})
+          ),
+          React.createElement("div",{style:s.barLabels},
+            React.createElement("span",null,"0g"),
+            React.createElement("span",{style:{color:hitGoal?"#4ade80":"#f59e0b"}},`${data.proteinGoal}g goal`)
+          )
+        ),
+
+        React.createElement("button",{onClick:handleSave,style:{...s.primaryBtn,width:"100%",padding:"14px",fontSize:15}},"💾 Save Today's Log"),
+        React.createElement(SyncBadge,null)
+      );
+    }
+
+    // ── CALENDAR ──
+    function CalendarView(){
+      const days=getDateRange(calYear,calMonth);
+      const firstDay=new Date(calYear,calMonth,1).getDay();
+      const monthName=new Date(calYear,calMonth,1).toLocaleString("default",{month:"long"});
+      const prevMonth=()=>calMonth===0?(setCalMonth(11),setCalYear(y=>y-1)):setCalMonth(m=>m-1);
+      const nextMonth=()=>calMonth===11?(setCalMonth(0),setCalYear(y=>y+1)):setCalMonth(m=>m+1);
+
+      const getCellStyle=ds=>{
+        if(isSunday(ds))          return{bg:"#1e293b",emoji:"😴",future:false};
+        if(ds>today)              return{bg:"#0f172a",emoji:"",future:true};
+        const log=data.logs[ds];
+        if(!log||log.wentGym===undefined) return{bg:"#1a0505",emoji:"❌",future:false};
+        if(log.wentGym)                   return{bg:"#052e16",emoji:"💪",future:false};
+        if(log.skipped&&log.reason)       return{bg:"#1c1008",emoji:"⚠️",future:false};
+        return{bg:"#1a0505",emoji:"❌",future:false};
+      };
+
+      return React.createElement("div",null,
+        React.createElement("div",{style:s.calHeader},
+          React.createElement("button",{style:s.calNavBtn,onClick:prevMonth},"‹"),
+          React.createElement("span",{style:s.calTitle},`${monthName} ${calYear}`),
+          React.createElement("button",{style:s.calNavBtn,onClick:nextMonth},"›")
+        ),
+        React.createElement("div",{style:s.calGrid},
+          ...["Su","Mo","Tu","We","Th","Fr","Sa"].map((d,i)=>React.createElement("div",{key:i,style:s.calDayLbl},d)),
+          ...Array(firstDay).fill(null).map((_,i)=>React.createElement("div",{key:"e"+i})),
+          ...days.map(ds=>{
+            const{bg,emoji,future}=getCellStyle(ds);
+            const day=parseLocal(ds).getDate();
+            return React.createElement("div",{
+              key:ds,
+              onClick:()=>!isSunday(ds)&&!future&&setSelectedDay(ds===selectedDay?null:ds),
+              style:{...s.calCell,background:bg,border:ds===today?"1.5px solid #6366f1":ds===selectedDay?"1.5px solid #94a3b8":"1.5px solid transparent",cursor:(isSunday(ds)||future)?"default":"pointer",opacity:future?0.3:1}
+            },
+              React.createElement("div",{style:s.calDayNum},day),
+              React.createElement("div",{style:{fontSize:11}},emoji)
+            );
+          })
+        ),
+        React.createElement("div",{style:s.legendRow},
+          ...[["#052e16","💪 Gym"],["#1c1008","⚠️ Skip"],["#1a0505","❌ Miss"],["#1e293b","😴 Rest"]].map(([bg,lbl])=>
+            React.createElement("div",{key:lbl,style:s.legendItem},
+              React.createElement("div",{style:{...s.legendDot,background:bg}}),lbl
+            )
+          )
+        ),
+        selectedDay&&(()=>{
+          const log=data.logs[selectedDay]||{};
+          const pct2=Math.min(100,Math.round(((log.protein||0)/data.proteinGoal)*100));
+          const rows=[
+            ["Gym",log.wentGym?"✅ Hit":log.skipped?`⚠️ ${log.reason}`:"❌ Missed"],
+            log.tag&&["Workout",log.tag],
+            ["Creatine",log.creatine===true?"✅":log.creatine===false?"❌":"—"],
+            ["Whey",log.whey===true?"✅":log.whey===false?"❌":"—"],
+            ["Protein",log.protein!=null?`${log.protein}g (${pct2}%)`:"—"],
+          ].filter(Boolean);
+          return React.createElement("div",{style:s.detail},
+            React.createElement("div",{style:s.detailDate},parseLocal(selectedDay).toDateString()),
+            ...rows.map(([k,v])=>React.createElement("div",{key:k,style:s.detailRow},
+              React.createElement("span",{style:s.detailKey},k),
+              React.createElement("span",{style:s.detailVal},v)
+            ))
+          );
+        })()
+      );
+    }
+
+    // ── STATS ──
+    function StatsView(){
+      const allLogs=Object.entries(data.logs).filter(([ds])=>!isSunday(ds));
+      const hit=allLogs.filter(([,l])=>l.wentGym).length;
+      const missed=allLogs.filter(([,l])=>!l.wentGym&&!(l.skipped&&l.reason)).length;
+      const validSkip=allLogs.filter(([,l])=>l.skipped&&l.reason).length;
+      const total=allLogs.length;
+      const pDays=allLogs.filter(([,l])=>l.protein!=null);
+      const avgP=pDays.length?Math.round(pDays.reduce((s,[,l])=>s+l.protein,0)/pDays.length):0;
+      const tagCounts={};
+      allLogs.forEach(([,l])=>{if(l.tag)tagCounts[l.tag]=(tagCounts[l.tag]||0)+1;});
+      const topTags=Object.entries(tagCounts).sort((a,b)=>b[1]-a[1]);
+      const weightEntries=Object.entries(data.weights||{}).sort(([a],[b])=>a.localeCompare(b));
+      const latestWeight=weightEntries.length?weightEntries[weightEntries.length-1][1]:null;
+      const firstWeight=weightEntries.length?weightEntries[0][1]:null;
+      const weightDelta=latestWeight&&firstWeight?(latestWeight-firstWeight).toFixed(1):null;
+
+      return React.createElement("div",null,
+        React.createElement("div",{style:s.statHero},
+          React.createElement("div",{style:s.statHeroNum},streak),
+          React.createElement("div",{style:s.statHeroLbl},"🔥 Current Streak")
+        ),
+        React.createElement("div",{style:s.statGrid},
+          ...[
+            ["💪",hit,"Days Hit"],["❌",missed,"Missed"],["⚠️",validSkip,"Valid Skips"],
+            ["📊",total?Math.round(hit/total*100)+"%":"0%","Attendance"],
+            ["🥩",avgP+"g","Avg Protein"],["🧪",allLogs.filter(([,l])=>l.creatine).length,"Creatine Days"],
+            ["⚖️",latestWeight?latestWeight+"kg":"—","Current Weight"],
+            ["📉",weightDelta?(Number(weightDelta)>0?"+"+weightDelta:weightDelta)+"kg":"—","Total Change"],
+          ].map(([e,v,l])=>React.createElement("div",{key:l,style:s.statCard},
+            React.createElement("div",{style:s.statEmoji},e),
+            React.createElement("div",{style:s.statNum},v),
+            React.createElement("div",{style:s.statLbl},l)
+          ))
+        ),
+        topTags.length>0&&React.createElement("div",{style:s.section},
+          React.createElement("div",{style:{...s.sectionTitle,marginBottom:12}},"Workout Breakdown"),
+          ...topTags.map(([tag,count])=>React.createElement("div",{key:tag,style:s.tagRow},
+            React.createElement("span",{style:s.tagName},tag),
+            React.createElement("div",{style:s.tagBarWrap},React.createElement("div",{style:{...s.tagBarFill,width:`${Math.round(count/hit*100)}%`}})),
+            React.createElement("span",{style:s.tagCount},count+"x")
+          ))
+        ),
+        weightEntries.length>1&&React.createElement("div",{style:s.section},
+          React.createElement("div",{style:{...s.sectionTitle,marginBottom:12}},"⚖️ Weight History"),
+          ...[...weightEntries].reverse().slice(0,8).map(([ds,w],i,arr)=>{
+            const prev=arr[i+1]?.[1];
+            const diff=prev!=null?(w-prev).toFixed(1):null;
+            const pos=diff!=null?Number(diff)<0:null;
+            return React.createElement("div",{key:ds,style:s.weightRow},
+              React.createElement("span",{style:s.weightDate},parseLocal(ds).toDateString()),
+              React.createElement("span",{style:s.weightVal},
+                w+"kg",
+                diff!=null&&React.createElement("span",{style:{fontSize:12,fontWeight:600,color:pos?"#4ade80":"#f87171",marginLeft:6}},
+                  (Number(diff)<0?"▼":"▲")+" "+Math.abs(diff)
+                )
+              )
+            );
+          })
+        )
+      );
+    }
+
+    // ── SETTINGS ──
+    function SettingsView(){
+      const [goal,setGoal]=useState(data.proteinGoal);
+      const [weightInput,setWeightInput]=useState("");
+      const weightEntries=Object.entries(data.weights||{}).sort(([a],[b])=>b.localeCompare(a));
+
+      const logWeight=()=>{
+        const w=Number(weightInput);
+        if(!w||w<20||w>300) return;
+        const updated={...data,weights:{...(data.weights||{}),[today]:w}};
+        saveLocal(updated); setData(updated); setWeightInput("");
+      };
+
+      return React.createElement("div",null,
+        // Protein goal
+        React.createElement("div",{style:s.section},
+          React.createElement("div",{style:s.sectionHead},React.createElement("span",{style:s.sectionIcon},"🥩"),React.createElement("span",{style:s.sectionTitle},"Protein Goal")),
+          React.createElement("div",{style:{display:"flex",gap:10,marginTop:10}},
+            React.createElement("input",{type:"number",value:goal,onChange:e=>setGoal(e.target.value),style:{...s.input,flex:1}}),
+            React.createElement("button",{onClick:()=>updateData({proteinGoal:Number(goal)}),style:s.primaryBtn},"Save")
+          )
+        ),
+        // Weight
+        React.createElement("div",{style:s.section},
+          React.createElement("div",{style:s.sectionHead},React.createElement("span",{style:s.sectionIcon},"⚖️"),React.createElement("span",{style:s.sectionTitle},"Log Weight")),
+          React.createElement("div",{style:{display:"flex",gap:10,marginTop:10}},
+            React.createElement("input",{type:"number",value:weightInput,onChange:e=>setWeightInput(e.target.value),placeholder:"e.g. 72.5 (kg)",style:{...s.input,flex:1}}),
+            React.createElement("button",{onClick:logWeight,style:s.primaryBtn},"Log")
+          ),
+          ...weightEntries.slice(0,5).map(([ds,w])=>React.createElement("div",{key:ds,style:s.weightRow},
+            React.createElement("span",{style:s.weightDate},parseLocal(ds).toDateString()),
+            React.createElement("span",{style:s.weightVal},w+"kg")
+          ))
+        ),
+        // Custom tags
+        React.createElement("div",{style:s.section},
+          React.createElement("div",{style:s.sectionHead},React.createElement("span",{style:s.sectionIcon},"🏷️"),React.createElement("span",{style:s.sectionTitle},"Custom Workout Tags")),
+          React.createElement("div",{style:s.chipRow},
+            ...(data.customTags||[]).map(t=>React.createElement("div",{key:t,style:{display:"flex",alignItems:"center",gap:4}},
+              React.createElement("span",{style:{...s.chip,...s.chipOn}},t),
+              React.createElement("button",{onClick:()=>updateData({customTags:data.customTags.filter(x=>x!==t)}),style:s.deleteTag},"✕")
+            ))
+          ),
+          React.createElement("div",{style:{display:"flex",gap:10,marginTop:12}},
+            React.createElement("input",{value:newTag,onChange:e=>setNewTag(e.target.value),placeholder:"e.g. Chest Day",style:{...s.input,flex:1}}),
+            React.createElement("button",{onClick:()=>{if(newTag.trim()){updateData({customTags:[...(data.customTags||[]),newTag.trim()]});setNewTag("");}},style:s.primaryBtn},"Add")
+          )
+        ),
+        // Sheets sync
+        React.createElement("div",{style:s.section},
+          React.createElement("div",{style:s.sectionHead},React.createElement("span",{style:s.sectionIcon},"☁️"),React.createElement("span",{style:s.sectionTitle},"Google Sheets Sync")),
+          React.createElement("div",{style:{fontSize:12,color:"#64748b",marginBottom:10}},scriptUrl?"✅ Connected":"❌ Not connected"),
+          React.createElement("button",{onClick:()=>{setUrlInput(scriptUrl);setUrlModal(true);},style:s.secondaryBtn},scriptUrl?"Update URL":"Connect Sheet"),
+          scriptUrl&&React.createElement("button",{onClick:()=>setSyncModal(true),style:{...s.ghostBtn,marginTop:10,display:"block"}},"Manual Sync")
+        )
+      );
+    }
+
+    // ── RENDER ──
+    return React.createElement("div",{style:s.root},
+      urlModal&&React.createElement(UrlModal,null),
+      syncModal&&React.createElement(SyncModal,null),
+      React.createElement("div",{style:s.header},
+        React.createElement("div",{style:s.headerInner},
+          React.createElement("span",{style:s.logo},"GymLog"),
+          React.createElement("span",{style:{fontSize:22}},"💪")
+        )
+      ),
+      React.createElement("div",{style:s.page},
+        view==="today"&&React.createElement(TodayView,null),
+        view==="calendar"&&React.createElement(CalendarView,null),
+        view==="stats"&&React.createElement(StatsView,null),
+        view==="settings"&&React.createElement(SettingsView,null)
+      ),
+      React.createElement("div",{style:s.bottomNav},
+        ...[["today","Today","🏠"],["calendar","Log","📅"],["stats","Stats","📊"],["settings","Settings","⚙️"]].map(([v,l,e])=>
+          React.createElement("button",{key:v,onClick:()=>setView(v),style:{...s.navBtn,...(view===v?s.navBtnActive:{})}},
+            React.createElement("div",{style:{fontSize:20}},e),
+            React.createElement("div",{style:{fontSize:10,marginTop:2}},l)
+          )
+        )
+      )
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App,null));
+  </script>
 
   <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
+    if('serviceWorker' in navigator){
+      window.addEventListener('load',()=>{
         navigator.serviceWorker.register('sw.js')
-          .then(reg => console.log('SW registered:', reg.scope))
-          .catch(err => console.log('SW failed:', err));
+          .then(r=>console.log('SW:',r.scope))
+          .catch(e=>console.log('SW err:',e));
       });
     }
   </script>
